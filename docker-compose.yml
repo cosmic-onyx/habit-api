@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  habit-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /usr/app/drf
+    ports:
+      - 8000:8000
+    volumes:
+      - ./drf:/usr/app/drf
+      - ./.env:/usr/app/.env  # Монтируем .env файл
+    env_file:
+      - .env  # Загружаем переменные из .env
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command:
+      bash -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    networks:
+      default:
+      habit_network:
+        aliases:
+          - habit-api
+
+  postgres_db:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:latest
+    hostname: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - default
+      - habit_network
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /usr/app/drf
+    command: bash -c "celery -A drf worker --loglevel=info"
+    volumes:
+      - ./drf:/usr/app/drf
+      - ./.env:/usr/app/.env  # Монтируем .env файл
+    env_file:
+      - .env  # Загружаем переменные из .env
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /usr/app/drf
+    command: bash -c "celery -A drf beat --loglevel=info"
+    volumes:
+      - ./drf:/usr/app/drf
+      - ./.env:/usr/app/.env  # Монтируем .env файл
+    env_file:
+      - .env  # Загружаем переменные из .env
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      habit-api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  habit_network:
+    name: habit_network
